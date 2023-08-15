@@ -17,12 +17,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/afcapel/stimulus-autocomplete.git"
+    "url": "https://github.com/mdchaney/stimulus-autocomplete.git"
   },
   "bugs": {
-    "url": "https://github.com/afcapel/stimulus-autocomplete/issues"
+    "url": "https://github.com/mdchaney/stimulus-autocomplete/issues"
   },
-  "homepage": "https://github.com/afcapel/stimulus-autocomplete",
+  "homepage": "https://github.com/mdchaney/stimulus-autocomplete",
   "peerDependencies": {
     "@hotwired/stimulus": "^3.0.0"
   },
