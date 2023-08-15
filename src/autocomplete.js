@@ -218,7 +218,16 @@ export default class Autocomplete extends Controller {
   }
 
   doFetch = async (url) => {
-    const response = await fetch(url, this.optionsForFetch())
+    this.abortLastRequest()
+
+    this.abortController = new AbortController()
+
+    const response = await fetch(url, {
+      ...this.optionsForFetch(),
+      signal: this.abortController.signal
+    })
+
+    this.abortController = null
 
     if (!response.ok) {
       throw new Error(`Server responded with status ${response.status}`)
@@ -226,6 +235,13 @@ export default class Autocomplete extends Controller {
 
     const html = await response.text()
     return html
+  }
+
+  abortLastRequest() {
+    if (this.abortController) {
+      this.abortController.abort()
+      this.abortController = null
+    }
   }
 
   replaceResults(html) {
