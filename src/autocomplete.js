@@ -3,8 +3,101 @@ import { Controller } from "@hotwired/stimulus"
 const optionSelector = "[role='option']:not([aria-disabled])"
 const activeSelector = "[aria-selected='true']"
 
+// This class will create objects that can fetch from a remote
+// source and cache the results.  The initializer will accept
+// a url and a queryParam.
+// The cache will be keyed by the query string.  It's possible
+// to use a longer key for cache lookup.  For instance, if the
+// query is "johnny" and "john" is already cached and marked as
+// partial: false, then we can use the cached value for "john"
+// when fetching "johnny".  This is useful for autocompletes
+// that fetch from a large data set.
+// The cache will be an object with the following structure:
+// {
+//  "john": {
+//  partial: false,
+//  items: [ 'john', 'johnny', 'johnny appleseed', 'john doe' ],
+//  exact_items: [ 'john' ],
+//  field: 'name',
+//  raw_term: 'John',
+//  term: 'john'
+//  }
+//  }
+class AutocompleteCache {
+  constructor(url, queryParam) {
+    this.url = new URL(url, window.location.origin)
+    this.queryParam = queryParam
+    this.cache = {}
+    this.abortController = null
+  }
+
+  // Abort the last request if it's still pending
+  abortLastRequest() {
+    if (this.abortController) {
+      this.abortController.abort()
+      this.abortController = null
+    }
+  }
+
+  // Note that this actually updates this.url as a side effect.
+  // Since it's not used anywhere else I don't care.
+  buildURL(query) {
+    this.url.searchParams.set(this.queryParam, query)
+    return this.url.toString()
+  }
+
+  findInCache(query) {
+    query = query.toLowerCase()
+    if (this.cache[query]) {
+      return this.cache[query]
+    } else {
+      for (var k of Object.keys(this.cache)) {
+	if (!this.cache[k].partial && query.startsWith(k)) {
+	  return this.cache[k];
+	}
+      }
+    }
+    return null
+  }
+
+  addToCache(query, data) {
+    this.cache[query.toLowerCase()] = data
+  }
+
+  // Fetch will return a promise that resolves to the results
+  // of the query.  If the query is already cached, then the
+  // promise will resolve immediately.  Otherwise, it will
+  // fetch from the remote source and cache the results.
+  fetch(query) {
+    const cached = this.findInCache(query)
+    if (cached) return Promise.resolve(cached)
+
+    // Otherwise, we need to fetch from the remote source
+    return this.performFetch(query)
+  }
+
+  performFetch(query) {
+    this.abortLastRequest()
+    this.abortController = new AbortController()
+
+    return fetch(this.buildURL(query), { signal: this.abortController.signal })
+      .then((response) => {
+	if (response.ok) {
+	  return response.json()
+	} else {
+	  throw new Error(response.statusText)
+	}
+      })
+      .then((data) => {
+	this.abortController = null
+	this.addToCache(query, data)
+        return data
+      })
+  }
+}
+
 export default class Autocomplete extends Controller {
-  static targets = ["input", "hidden", "results"]
+  static targets = ["input", "results"]
   static classes = ["selected"]
   static values = {
     ready: Boolean,
@@ -16,10 +109,13 @@ export default class Autocomplete extends Controller {
   }
   static uniqOptionId = 0
 
+  autocomplete_cache = null
   item_count = 0
 
   connect() {
     this.close()
+
+    this.autocomplete_cache = new AutocompleteCache(this.urlValue, this.queryParamValue)
 
     if(!this.inputTarget.hasAttribute("autocomplete")) this.inputTarget.setAttribute("autocomplete", "off")
     this.inputTarget.setAttribute("spellcheck", "false")
@@ -124,25 +220,10 @@ export default class Autocomplete extends Controller {
   }
 
   commit(selected) {
-    if (selected.getAttribute("aria-disabled") === "true") return
+    if (selected.ariaDisabled) return
 
-    if (selected instanceof HTMLAnchorElement) {
-      selected.click()
-      this.close()
-      return
-    }
-
-    const textValue = selected.getAttribute("data-autocomplete-label") || selected.textContent.trim()
-    const value = selected.getAttribute("data-autocomplete-value") || textValue
+    const textValue = selected.dataset.autocompleteValue || selected.textContent.trim()
     this.inputTarget.value = textValue
-
-    if (this.hasHiddenTarget) {
-      this.hiddenTarget.value = value
-      this.hiddenTarget.dispatchEvent(new Event("input"))
-      this.hiddenTarget.dispatchEvent(new Event("change"))
-    } else {
-      this.inputTarget.value = value
-    }
 
     this.inputTarget.focus()
     this.hideAndRemoveOptions()
@@ -150,7 +231,7 @@ export default class Autocomplete extends Controller {
     this.element.dispatchEvent(
       new CustomEvent("autocomplete.change", {
         bubbles: true,
-        detail: { value: value, textValue: textValue, selected: selected }
+        detail: { textValue: textValue, selected: selected }
       })
     )
   }
@@ -174,8 +255,6 @@ export default class Autocomplete extends Controller {
   }
 
   onInputChange = () => {
-    if (this.hasHiddenTarget) this.hiddenTarget.value = ""
-
     const query = this.inputTarget.value.trim()
     if (query && query.length >= this.minLengthValue) {
       this.fetchResults(query)
@@ -190,18 +269,12 @@ export default class Autocomplete extends Controller {
     optionsWithoutId.forEach(el => el.id = `${prefix}-option-${Autocomplete.uniqOptionId++}`)
   }
 
-  hideAndRemoveOptions() {
-    this.close()
-    this.resultsTarget.innerHTML = null
-  }
-
   fetchResults = async (query) => {
     if (!this.hasUrlValue) return
 
-    const url = this.buildURL(query)
     try {
       this.element.dispatchEvent(new CustomEvent("loadstart"))
-      const json_response = await this.doFetch(url)
+      const json_response = await this.autocomplete_cache.fetch(query);
       this.replaceResults(json_response, query)
       this.element.dispatchEvent(new CustomEvent("load"))
       this.element.dispatchEvent(new CustomEvent("loadend"))
@@ -212,39 +285,14 @@ export default class Autocomplete extends Controller {
     }
   }
 
-  buildURL(query) {
-    const url = new URL(this.urlValue, window.location.href)
-    const params = new URLSearchParams(url.search.slice(1))
-    params.append(this.queryParamValue, query)
-    url.search = params.toString()
-
-    return url.toString()
+  hideAndRemoveOptions() {
+    this.close()
+    this.clearOptions()
   }
 
-  doFetch = async (url) => {
-    this.abortLastRequest()
-
-    this.abortController = new AbortController()
-
-    const response = await fetch(url, {
-      ...this.optionsForFetch(),
-      signal: this.abortController.signal
-    })
-
-    this.abortController = null
-
-    if (!response.ok) {
-      throw new Error(`Server responded with status ${response.status}`)
-    }
-
-    const json_response = await response.json()
-    return json_response
-  }
-
-  abortLastRequest() {
-    if (this.abortController) {
-      this.abortController.abort()
-      this.abortController = null
+  clearOptions() {
+    while (this.resultsTarget.firstChild) {
+      this.resultsTarget.removeChild(this.resultsTarget.firstChild)
     }
   }
 
@@ -343,6 +391,7 @@ export default class Autocomplete extends Controller {
   // Note that when the sorry message is shown the other list items
   // have already been removed.
   showSorryMessage(query) {
+    this.hideSorryMessage()
     const li = document.createElement("li")
     li.classList.add("list-group-item", "disabled", "sorry-message")
     li.ariaDisabled = true
@@ -352,10 +401,8 @@ export default class Autocomplete extends Controller {
   }
 
   hideSorryMessage() {
-    const li = this.resultsTarget.querySelector("li.disabled.sorry-message")
-    if (li) {
-      this.resultsTarget.removeChild(li)
-    }
+    const li = this.resultsTarget.querySelector("li.sorry-message")
+    if (li) this.resultsTarget.removeChild(li)
   }
 
   // setHeight will set the height of the resultsTarget to be the
