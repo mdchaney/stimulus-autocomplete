@@ -28,6 +28,11 @@
     .container {
       max-width: 600px;
     }
+
+    ul[data-autocomplete-target="results"] {
+      overflow: auto;
+      z-index: 1;
+    }
   </style>
 </head>
 
@@ -37,9 +42,8 @@
 
     <div class="mb-3">
       <label for="birds">Plain text bird names</label>
-      <div data-controller="autocomplete" data-autocomplete-url-value="/results-plain-text.html">
+      <div data-controller="autocomplete" data-autocomplete-url-value="/results.json" role="combobox">
         <input name="birds" type="text" class="form-control" data-autocomplete-target="input" placeholder="search a bird" autofocus/>
-        <input type="hidden" name="bird_id" data-autocomplete-target="hidden"/>
         <ul data-autocomplete-target="results" class="list-group"></ul>
       </div>
     </div>
