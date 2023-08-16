@@ -335,11 +335,6 @@ export default class Autocomplete extends Controller {
     } else {
       this.hideSorryMessage()
     }
-
-    // If there is only one item, then we should select it.
-    if (this.item_count === 1) {
-      this.selectOption(last_li)
-    }
   }
 
   // If there are no results, then we should show a "sorry" message.
